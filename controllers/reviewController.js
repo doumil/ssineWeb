@@ -1,122 +1,124 @@
 const Review = require('../models/Review')
 const Product = require('../models/Product')
 const Order = require('../models/Order')
+const axios = require('axios') // تأكد من استيراد axios إذا لم يكن موجوداً
 
 exports.createReview = async (req, res) => {
   try {
-    const { productId, rating, comment, orderId } = req.body
-    const userId = req.user.id
+    const { productId, rating, comment, orderId } = req.body;
+    const userId = req.user._id;
 
-    // Check if the order exists, belongs to the user, is delivered, and contains the productId
-    const order = await Order.findById(orderId)
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found.',
-      })
+    // 1. التحقق من orderId فقط إذا كان صالحاً وليس "none" أو فارغاً لتجنب خطأ CastError
+    if (orderId && orderId !== "none" && orderId.trim() !== "") {
+      const order = await Order.findById(orderId);
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found.' });
+      }
     }
 
-    if (order.userId.toString() !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not authorized to review this order.',
-      })
+    // 2. البحث عن المنتج في MongoDB
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    if (order.status !== 'delivered') {
-      return res.status(400).json({
-        success: false,
-        message: 'You can only review products from delivered orders.',
-      })
-    }
-
-    const productInOrder = order.items.some(
-      (item) => item.productId.toString() === productId
-    )
-
-    if (!productInOrder) {
-      return res.status(400).json({
-        success: false,
-        message: 'The product is not part of the specified order.',
-      })
-    }
-
-    // Check if a review already exists for the product with the same orderId
-    const existingReview = await Review.findOne({ productId, orderId })
-    if (existingReview) {
-      return res.status(400).json({
-        success: false,
-        message: 'You have already reviewed this product for this order.',
-      })
-    }
-
-    const COMMENT_CHAR_LIMIT = 1500
-    if (comment && comment.length > COMMENT_CHAR_LIMIT) {
-      return res.status(400).json({
-        success: false,
-        message: `Comment exceeds the character limit of ${COMMENT_CHAR_LIMIT} characters.`,
-      })
-    }
-
-    const review = new Review({
+    // 3. حفظ التقييم في MongoDB
+    const newReview = new Review({
       productId,
       userId,
-      orderId,
       rating,
-      comment: comment || '',
-    })
-    await review.save()
+      comment,
+      orderId: (orderId && orderId !== "none" && orderId.trim() !== "") ? orderId : undefined
+    });
+    await newReview.save();
+
+    // 4. إرسال التقييم تلقائياً إلى WooCommerce REST API مع تحويل rating إلى Integer
+    try {
+      const wpUrl = process.env.WP_URL; 
+      const consumerKey = process.env.WP_CONSUMER_KEY;
+      const consumerSecret = process.env.WP_CONSUMER_SECRET;
+
+      const wooProductId = product.wooProductId || product.wpId;
+
+      if (wooProductId && wpUrl) {
+        await axios.post(
+          `${wpUrl}/wp-json/wc/v3/products/reviews`,
+          {
+            product_id: wooProductId, 
+            reviewer: req.user.userFirstName ? `${req.user.userFirstName} ${req.user.userLastName || ''}` : "Customer",
+            reviewer_email: req.user.email || "customer@ssine.net",
+            review: comment,
+            rating: parseInt(rating, 10), // <--- تم التعديل هنا لضمان إرساله كـ Integer
+          },
+          {
+            auth: {
+              username: consumerKey,
+              password: consumerSecret,
+            },
+          }
+        );
+      }
+    } catch (wooError) {
+      console.error('Failed to sync review to WooCommerce:', wooError.response?.data || wooError.message);
+    }
+
+    // 5. حساب وتحديث averageRating و reviewCount بشكل صحيح ومضبوط في MongoDB للمنتج
+    const allReviews = await Review.find({ productId });
+    const totalReviews = allReviews.length;
+    const sumRatings = allReviews.reduce((acc, rev) => acc + rev.rating, 0);
+    const averageRating = totalReviews > 0 ? parseFloat((sumRatings / totalReviews).toFixed(1)) : 0;
+
+    product.averageRating = averageRating;
+    product.reviewCount = totalReviews;
+    await product.save();
 
     res.status(201).json({
       success: true,
-      message: 'Review added successfully.',
-    })
+      message: 'Review created and synced to WooCommerce successfully!',
+      review: newReview,
+      averageRating,
+      totalReviews,
+    });
 
-    // Increment reviewCount and update averageRating in the background
-    const product = await Product.findById(productId)
-    if (product) {
-      product.reviewCount += 1
-      product.averageRating = parseFloat(
-        (
-          (product.averageRating * (product.reviewCount - 1) + rating) /
-          product.reviewCount
-        ).toFixed(1)
-      )
-      await product.save()
-    }
   } catch (error) {
-    console.error('Error adding review:', error)
+    console.error('Error adding review:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to add review.',
+      message: 'Failed to create review.',
       error: error.message,
-    })
+    });
   }
-}
+};
 
 exports.getProductReviews = async (req, res) => {
   try {
-    const { productId } = req.params
-    const { page = 1, limit = 10 } = req.query
+    const { productId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
 
     const reviews = await Review.find({ productId })
       .populate('userId', 'userFirstName userLastName')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
-      .limit(parseInt(limit))
+      .limit(parseInt(limit));
 
-    const totalReviews = await Review.countDocuments({ productId })
+    const totalReviews = await Review.countDocuments({ productId });
 
-    const product = await Product.findById(productId).select('averageRating')
+    const product = await Product.findById(productId).select('averageRating');
 
     if (!product) {
       return res.status(404).json({
         success: false,
         message: 'Product not found.',
-      })
+      });
     }
 
-    const averageRating = parseFloat(product.averageRating.toFixed(1))
+    let calculatedAverage = product.averageRating || 0;
+    if (calculatedAverage === 0 && reviews.length > 0) {
+      const sum = reviews.reduce((acc, rev) => acc + rev.rating, 0);
+      calculatedAverage = sum / reviews.length;
+    }
+
+    const averageRating = parseFloat((calculatedAverage || 0).toFixed(1));
 
     res.status(200).json({
       success: true,
@@ -127,16 +129,16 @@ exports.getProductReviews = async (req, res) => {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalReviews / limit),
       },
-    })
+    });
   } catch (error) {
-    console.error('Error fetching reviews:', error)
+    console.error('Error fetching reviews:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch reviews.',
       error: error.message,
-    })
+    });
   }
-}
+};
 
 exports.deleteComment = async (req, res) => {
   try {
@@ -163,13 +165,11 @@ exports.deleteComment = async (req, res) => {
 
     await Review.deleteOne({ _id: reviewId })
 
-    // Send success response
     res.status(200).json({
       success: true,
       message: 'Review deleted successfully.',
     })
 
-    // Decrement reviewCount and update averageRating in the background
     const product = await Product.findById(productId)
     if (product && product.reviewCount > 0) {
       product.reviewCount -= 1
@@ -200,7 +200,6 @@ exports.getReviewableProducts = async (req, res) => {
     const { orderId } = req.params
     const userId = req.user.id
 
-    // Find the order and check if it belongs to the user
     const order = await Order.findById(orderId)
     if (!order) {
       return res.status(404).json({
@@ -218,13 +217,10 @@ exports.getReviewableProducts = async (req, res) => {
 
     const productIds = order.items.map((item) => item.productId)
 
-    // Find all reviews the user has already made for this order
     const userReviews = await Review.find({ orderId, userId }).select('productId')
 
-    // Get the productIds that the user has already reviewed
     const reviewedProductIds = userReviews.map((review) => review.productId.toString())
 
-    // Filter out the reviewed products
     const reviewableProductIds = productIds.filter(
       (productId) => !reviewedProductIds.includes(productId.toString())
     )

@@ -1,35 +1,37 @@
-const mongoose = require('mongoose')
+const mongoose = require('mongoose');
 
 const DealSchema = new mongoose.Schema(
   {
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product', // الربط مع Model ديال Product
+      required: true,
+    },
     dealOrder: {
       type: Number,
       required: true,
-      unique: true
+      default: 0,
     },
     imageUrl: {
       type: String,
-      required: true,
     },
     title: {
       type: String,
-      required: true
     },
     description: {
-      type: String
+      type: String,
     },
     action: {
       type: String,
-      required: true,
+      default: 'view_product',
     },
     aspectRatio: {
       type: String,
-      required: true,
       enum: ['16:9', '4:3', '3:2'],
       default: '16:9',
     },
   },
   { timestamps: true }
-)
+);
 
-module.exports = mongoose.model('Deal', DealSchema)
+module.exports = mongoose.model('Deal', DealSchema);

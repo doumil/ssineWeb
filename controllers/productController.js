@@ -13,142 +13,15 @@ const ObjectId = mongoose.Types.ObjectId
 const CACHE_TTL = 3600
 
 exports.getProductsByCategoryId = async (req, res) => {
-  try {
-    const { categoryId } = req.params
-    const {
-      page = 1,
-      limit = 10,
-      minPrice,
-      maxPrice,
-      exactRatings, // should look like: "1,2,3"
-      minRatingCount,
-      maxRatingCount,
-      minLikeCount,
-      maxLikeCount,
-      sortBy, // options: "priceAsc", "priceDesc", "ratingCountDesc", "likeCountDesc"
-    } = req.query
-
-    let redisClient = null
-    if (USE_REDIS) {
-      redisClient = createRedisClient()
+    try {
+        const { categoryId } = req.params;
+        const products = await Product.find({ category: categoryId })
+            .populate('category'); // 👈 زيادة هذه السلسلة ضرورية
+        res.status(200).json({ success: true, products });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
-
-    let categoriesTree = null
-    const cacheKey = `descendants:${categoryId}`
-
-    if (USE_REDIS && redisClient) {
-      const cachedValue = await redisClient.get(cacheKey)
-      if (cachedValue) {
-        categoriesTree = JSON.parse(cachedValue)
-      }
-    }
-
-    if (!categoriesTree) {
-      categoriesTree = await Category.aggregate([
-        {
-          $match: { _id: new ObjectId(categoryId), isActive: true },
-        },
-        {
-          $graphLookup: {
-            from: "categories",
-            startWith: "$_id",
-            connectFromField: "_id",
-            connectToField: "parentCategory",
-            as: "descendants",
-            restrictSearchWithMatch: { isActive: true },
-          },
-        },
-      ])
-
-      if (categoriesTree.length && USE_REDIS && redisClient) {
-        await redisClient.set(cacheKey, JSON.stringify(categoriesTree), "EX", CACHE_TTL)
-      }
-    }
-
-    if (!categoriesTree || !categoriesTree.length) {
-      return res.status(404).json({
-        success: false,
-        message: "Category not found or inactive",
-      })
-    }
-
-    const allCategoryIds = [
-      categoriesTree[0]._id,
-      ...categoriesTree[0].descendants.map((cat) => cat._id),
-    ]
-
-    const subCategories = await Category.find({
-      parentCategory: categoryId,
-      isActive: true,
-    })
-
-    const filters = { category: { $in: allCategoryIds } }
-
-    if (minPrice || maxPrice) {
-      filters.price = {}
-      if (minPrice) filters.price.$gte = parseFloat(minPrice)
-      if (maxPrice) filters.price.$lte = parseFloat(maxPrice)
-    }
-
-    if (exactRatings) {
-      const ratingsArray = exactRatings.split(",").map(Number)
-      filters.averageRating = { $in: ratingsArray.flatMap(rating => {
-        return Array.from({ length: 10 }, (_, i) => rating + i * 0.1)
-      }) }
-    }
-
-    if (minRatingCount || maxRatingCount) {
-      filters.reviewCount = {}
-      if (minRatingCount) filters.reviewCount.$gte = parseInt(minRatingCount)
-      if (maxRatingCount) filters.reviewCount.$lte = parseInt(maxRatingCount)
-    }
-
-    if (minLikeCount || maxLikeCount) {
-      filters.likeCount = {}
-      if (minLikeCount) filters.likeCount.$gte = parseInt(minLikeCount)
-      if (maxLikeCount) filters.likeCount.$lte = parseInt(maxLikeCount)
-    }
-
-    const sortOptions = {}
-    if (sortBy === "priceAsc") sortOptions.price = 1
-    if (sortBy === "priceDesc") sortOptions.price = -1
-    if (sortBy === "ratingCountDesc") sortOptions.reviewCount = -1
-    if (sortBy === "likeCountDesc") sortOptions.likeCount = -1
-
-    const products = await Product.find(filters)
-      .sort(sortOptions)
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
-      .populate("category", "name description")
-      .exec()
-
-    const totalProducts = await Product.countDocuments(filters)
-
-    const transformedProducts = products.map((product) => ({
-      ...product.toObject(),
-      tags: [],
-      description: "",
-    }))
-
-    res.status(200).json({
-      success: true,
-      subCategories,
-      products: transformedProducts,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalProducts / limit),
-        totalProducts,
-      },
-    })
-  } catch (error) {
-    console.error("Error fetching products by category:", error)
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch products by category",
-      error: error.message,
-    })
-  }
-}
+};
 
 /*
 const getAllSubCategoryIds = async (parentCategoryId) => {
@@ -171,159 +44,73 @@ const getAllSubCategoryIds = async (parentCategoryId) => {
 
 
 exports.searchProducts = async (req, res) => {
-  try {
-    const {
-      query,
-      categoryId,
-      page = 1,
-      limit = 10,
-      minPrice,
-      maxPrice,
-      exactRatings,
-      minRatingCount,
-      maxRatingCount,
-      minLikeCount,
-      maxLikeCount,
-      sortBy,
-    } = req.query
-
-    if (!query || query.trim() === "") {
-      return res.status(400).json({
-        success: false,
-        message: "Search query is required.",
-      })
+    try {
+        const query = req.query.q;
+        const products = await Product.find({
+            title: { $regex: query, $options: 'i' }
+        }).populate('category'); // 👈 زيادة هذه السلسلة ضرورية
+        
+        res.status(200).json({ success: true, products });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
-
-    if (req.user) {
-      (async () => {
-        try {
-          await SearchTerm.create({
-            userId: req.user.id,
-            searchTerm: query,
-          })
-        } catch (err) {
-          console.error("Failed to log search term:", err.message)
-        }
-      })()
-    }
-
-    const searchFilter = {
-      $text: { $search: query },
-    }
-
-    if (categoryId) {
-      searchFilter.category = categoryId
-    }
-
-    if (minPrice || maxPrice) {
-      searchFilter.price = {}
-      if (minPrice) searchFilter.price.$gte = parseFloat(minPrice)
-      if (maxPrice) searchFilter.price.$lte = parseFloat(maxPrice)
-    }
-
-    if (exactRatings) {
-      const ratingsArray = exactRatings.split(",").map(Number)
-      searchFilter.averageRating = {
-        $in: ratingsArray.flatMap((rating) =>
-          Array.from({ length: 10 }, (_, i) => rating + i * 0.1)
-        ),
-      }
-    }
-
-    if (minRatingCount || maxRatingCount) {
-      searchFilter.reviewCount = {}
-      if (minRatingCount) searchFilter.reviewCount.$gte = parseInt(minRatingCount)
-      if (maxRatingCount) searchFilter.reviewCount.$lte = parseInt(maxRatingCount)
-    }
-
-    if (minLikeCount || maxLikeCount) {
-      searchFilter.likeCount = {}
-      if (minLikeCount) searchFilter.likeCount.$gte = parseInt(minLikeCount)
-      if (maxLikeCount) searchFilter.likeCount.$lte = parseInt(maxLikeCount)
-    }
-
-    const sortOptions = {}
-    if (sortBy === "priceAsc") sortOptions.price = 1
-    if (sortBy === "priceDesc") sortOptions.price = -1
-    if (sortBy === "ratingCountDesc") sortOptions.reviewCount = -1
-    if (sortBy === "likeCountDesc") sortOptions.likeCount = -1
-
-    const skip = (page - 1) * limit
-
-    const [products, totalProducts] = await Promise.all([
-      Product.find(searchFilter)
-        .sort({ ...sortOptions, score: { $meta: "textScore" } })
-        .skip(skip)
-        .limit(Number(limit))
-        .populate("category", "name description"),
-      Product.countDocuments(searchFilter),
-    ])
-
-    const totalPages = Math.ceil(totalProducts / limit)
-
-    return res.status(200).json({
-      success: true,
-      products,
-      pagination: {
-        currentPage: Number(page),
-        totalPages,
-        totalProducts,
-        limit: Number(limit),
-      },
-    })
-  } catch (error) {
-    console.error("Error searching products:", error)
-    res.status(500).json({
-      success: false,
-      message: "An error occurred while searching for products.",
-      error: error.message,
-    })
-  }
-}
+};
 
 
 
+// ==========================================
+// جلب تفاصيل منتج واحد بصفة خاصة (Single Product)
+// ==========================================
 exports.getSingleProduct = async (req, res) => {
-  try {
-    const { productId } = req.params
+    try {
+        const { productId } = req.params;
 
-    const product = await Product.findById(productId)
-      .populate('category', 'name description')
-      .exec()
+        // 1. البحث عن المنتج بالـ ID بوحده
+        const product = await Product.findById(productId).populate({
+            path: 'category',
+            select: 'name description'
+        });
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found.',
-      })
-    }
-
-    if (req.user) {
-      (async () => {
-        try {
-          await ProductView.create({
-            userId: req.user.id,
-            productId,
-          })
-        } catch (err) {
-          console.error('Failed to log product view:', err.message)
+        if (!product) {
+            return res.status(404).json({
+                success: false,
+                message: 'المنتج غير موجود'
+            });
         }
-      })()
-    }
 
-    res.status(200).json({
-      success: true,
-      product,
-    })
-  } catch (error) {
-    console.error('Error fetching product:', error)
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch product.',
-      error: error.message,
-    })
-  }
-}
+        // 2. تصفية وتحديد الصور الخاصة بهاد المنتج فقط (مربوطة بـ ID ديالو)
+        let singleProductImages = [];
+
+        // إيلا كانت imageURLs مصفوفة وفيها صور، كنزيدو شرط التأكد أن الصور خاصة بهاد المنتج
+        if (Array.isArray(product.imageURLs) && product.imageURLs.length > 0) {
+            singleProductImages = product.imageURLs;
+        } else if (Array.isArray(product.images) && product.images.length > 0) {
+            singleProductImages = product.images;
+        } else if (product.image) {
+            singleProductImages = [product.image];
+        }
+
+        // 3. إرجاع النتيجة بشكل صريح لـ Flutter
+        return res.status(200).json({
+            success: true,
+            productResponse: {
+                product: {
+                    ...product.toObject(),
+                    // هنا كنأكدو أن imageURLs فيها غير الصور ديال هاد المنتج الفردي
+                    imageURLs: singleProductImages 
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error('Error fetching single product:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'خطأ في السيرفر',
+            error: err.message
+        });
+    }
+};
 
 
 exports.getLikedProducts = async (req, res) => {
@@ -378,12 +165,11 @@ exports.getLikedProducts = async (req, res) => {
       if (minPrice) filters.price.$gte = parseFloat(minPrice)
       if (maxPrice) filters.price.$lte = parseFloat(maxPrice)
     }
-
     if (exactRatings) {
       const ratingsArray = exactRatings.split(',').map(Number)
       filters.averageRating = { 
         $in: ratingsArray.flatMap(rating => 
-          Array.from({ length: 10 }, (_, i) => rating + i * 0.1)
+          Array.from({ length: 10 }, (_, i) => parseFloat((rating + i * 0.1).toFixed(1)))
         ) 
       }
     }
@@ -434,48 +220,59 @@ exports.getLikedProducts = async (req, res) => {
 }
 
 exports.getBestOfProducts = async (req, res) => {
-  try {
-    const { period = 'week', page = 1, limit = 10 } = req.query
-
-    const validPeriod = period === 'month' ? 'month' : 'week'
-
-    const bestOfProduct = await BestOfProduct.findOne({ period: validPeriod })
-      .sort({ startDate: -1 })
-      .exec()
-
-    if (!bestOfProduct) {
-      return res.status(404).json({
-        success: false,
-        message: `No BestOfProduct found for the period: ${validPeriod}`,
-      })
+    try {
+        const products = await Product.find({})
+            .populate('category') // 👈 زيادة هذه السلسلة ضرورية
+            .limit(10);
+        res.status(200).json({ success: true, products });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
+};
 
-    const productIds = bestOfProduct.productIds
+// دالة مؤقتة لتصحيح وربط المنتجات بالتصنيفات الحقيقية بناءً على النصوص القديمة
+exports.fixCategoriesObjectId = async (req, res) => {
+    try {
+        const products = await Product.find({});
+        let updatedCount = 0;
 
-    const products = await Product.find({ _id: { $in: productIds } }).exec()
+        for (let product of products) {
+            // إذا كان الـ category عبارة عن نص (String) وليس ObjectId
+            if (product.category && typeof product.category === 'string') {
+                // نبحث عن التصنيف في كوليكشن Category بالاسم أو الـ slug
+                let matchedCategory = await Category.findOne({ 
+                    name: { $regex: new RegExp(`^${product.category}$`, 'i') } 
+                });
 
-    const transformedProducts = products.map((product) => ({
-      ...product.toObject(),
-      tags: [],
-      description: "",
-    }))
+                if (matchedCategory) {
+                    product.category = matchedCategory._id; // استبداله بالـ ObjectId الحقيقي
+                    await product.save();
+                    updatedCount++;
+                }
+            }
+        }
 
-    res.status(200).json({
-      success: true,
-      period: validPeriod,
-      products: transformedProducts,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(productIds.length / limit),
-        totalProducts: productIds.length,
-      },
-    })
-  } catch (error) {
-    console.error('Error fetching BestOfProducts:', error)
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch BestOfProducts',
-      error: error.message,
-    })
-  }
-}
+        return res.status(200).json({
+            success: true,
+            message: `تم تحديث ${updatedCount} منتج وربطهم بالتصنيفات بنجاح!`
+        });
+    } catch (error) {
+        console.error('Error fixing categories:', error.message);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+};
+// مثال للدالة المسؤولة عن جلب جميع المنتجات المتزامنة
+exports.getAllSyncProducts = async (req, res) => {
+    try {
+        const products = await Product.find({})
+            .populate('category'); // 👈 هادي هي الكلمة السحرية اللي كتخلي الـ Backend يرجع الكاتيجوري كاملة مشي غير الـ ID
+            
+        res.status(200).json({ 
+            success: true, 
+            count: products.length, 
+            products 
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};

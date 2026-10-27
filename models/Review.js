@@ -9,20 +9,28 @@ const ReviewSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false // 👈 ردناها false حيت التقييمات ديال Woo يقدر ما يكونش اليوزر مسجل عندنا
     },
     orderId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Order',
-        required: true
+        required: false // 👈 ردناها false حيت التقييمات ديال Woo ما عندهاش orderId محلي
     },
     rating: {
         type: Number,
-        required: true
+        required: true,
+        min: 1,
+        max: 5
     },
     comment: {
         type: String,
         default: ''
+    },
+    // 👈 زدنا هاد الحقل الجديد الخاص بمزامنة WooCommerce
+    wooCommerceReviewId: {
+        type: Number,
+        unique: true,
+        sparse: true
     }
 }, { timestamps: true })
 

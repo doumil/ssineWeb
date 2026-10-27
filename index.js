@@ -1,13 +1,16 @@
+require('dotenv').config()
+
 const express = require('express')
 const app = express()
 const bodyParser = require('body-parser')
 const mongoose = require('mongoose')
-const dotenv = require('dotenv')
 const rateLimit = require('express-rate-limit')
 const { USE_REDIS } = require('./config/env')
 const createRedisClient = require('./services/redisClient')
-dotenv.config()
 const cronJobs = require('./cronJobs')
+
+// 👈 هنا المسار الصحيح للملف ديالك
+const { syncReviewsFromWooCommerce } = require('./services/woocommerceSync');
 
 const authRoute = require('./routes/auth')
 const dealsRoute = require('./routes/deals')
@@ -25,10 +28,42 @@ const aiSuggestionsRoute = require('./routes/aiSuggestions')
 const likesRoute = require('./routes/likes')
 const trendingSearchesRoute = require('./routes/searchTrends')
 const userProfilesRoute = require('./routes/userProfiles')
+const webhooksRoute = require('./routes/webhooks')
 
 mongoose
   .connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to the MongoDB'))
+  .then(async () => {
+    console.log('Connected to the MongoDB')
+
+    // 🚀 تشغيل مزامنة التقييمات أول ما يتشعل السيرفر
+    try {
+      await syncReviewsFromWooCommerce()
+      console.log('✅ تم تشغيل مزامنة التقييمات بنجاح عند الإقلاع!')
+    } catch (syncErr) {
+      console.error('❌ فشلت مزامنة التقييمات عند الإقلاع:', syncErr.message)
+    }
+
+    try {
+      const AdminJS = (await import('adminjs')).default
+      const expressModule = await import('@adminjs/express')
+      const AdminJSExpress = expressModule.default || expressModule
+      const mongooseModule = await import('@adminjs/mongoose')
+      const AdminJSMongoose = mongooseModule.default || mongooseModule
+
+      AdminJS.registerAdapter(AdminJSMongoose)
+
+      const admin = new AdminJS({
+        databases: [mongoose],
+        rootPath: '/admin',
+      })
+
+      const adminRouter = AdminJSExpress.buildRouter(admin)
+      app.use(admin.options.rootPath, adminRouter)
+      console.log('AdminJS started at http://localhost:5001/admin')
+    } catch (err) {
+      console.log('AdminJS failed to load:', err.message)
+    }
+  })
   .catch((err) => {
     console.log(err)
   })
@@ -53,10 +88,10 @@ const paymentLimiter = rateLimit({
 
 app.use(globalLimiter)
 
-app.use('/api/payments', paymentLimiter, paymentRoute)
-
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({ extended: true }))
+
+app.use('/api/payments', paymentLimiter, paymentRoute)
 
 app.use('/api', authRoute)
 app.use('/api/deals', dealsRoute)
@@ -73,6 +108,7 @@ app.use('/api/aiSuggestions', aiSuggestionsRoute)
 app.use('/api/likes', likesRoute)
 app.use('/api/trendingSearches', trendingSearchesRoute)
 app.use('/api/userProfiles', userProfilesRoute)
+app.use('/api/webhooks', webhooksRoute)
 
 const PORT = process.env.PORT || 5001
 app.listen(PORT, () => {

@@ -3,10 +3,13 @@ const mongoose = require('mongoose')
 const CategorySchema = new mongoose.Schema({
     name: {
         type: String,
-        required: true,
-        unique: true
+        required: true
     },
     description: {
+        type: String,
+        default: ''
+    },
+    image: {
         type: String,
         default: ''
     },
@@ -18,6 +21,11 @@ const CategorySchema = new mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
+    },
+    wooCategoryId: {
+        type: Number,
+        unique: true,
+        sparse: true
     }
 }, { timestamps: true })
 
