@@ -9,7 +9,6 @@ const { USE_REDIS } = require('./config/env')
 const createRedisClient = require('./services/redisClient')
 const cronJobs = require('./cronJobs')
 
-// 👈 هنا المسار الصحيح للملف ديالك
 const { syncReviewsFromWooCommerce } = require('./services/woocommerceSync');
 
 const authRoute = require('./routes/auth')
@@ -29,48 +28,6 @@ const likesRoute = require('./routes/likes')
 const trendingSearchesRoute = require('./routes/searchTrends')
 const userProfilesRoute = require('./routes/userProfiles')
 const webhooksRoute = require('./routes/webhooks')
-
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(async () => {
-    console.log('Connected to the MongoDB')
-
-    // 🚀 تشغيل مزامنة التقييمات أول ما يتشعل السيرفر
-    try {
-      await syncReviewsFromWooCommerce()
-      console.log('✅ تم تشغيل مزامنة التقييمات بنجاح عند الإقلاع!')
-    } catch (syncErr) {
-      console.error('❌ فشلت مزامنة التقييمات عند الإقلاع:', syncErr.message)
-    }
-
-    try {
-      const AdminJS = (await import('adminjs')).default
-      const expressModule = await import('@adminjs/express')
-      const AdminJSExpress = expressModule.default || expressModule
-      const mongooseModule = await import('@adminjs/mongoose')
-      const AdminJSMongoose = mongooseModule.default || mongooseModule
-
-      AdminJS.registerAdapter(AdminJSMongoose)
-
-      const admin = new AdminJS({
-        databases: [mongoose],
-        rootPath: '/admin',
-      })
-
-      const adminRouter = AdminJSExpress.buildRouter(admin)
-      app.use(admin.options.rootPath, adminRouter)
-      console.log('AdminJS started at http://localhost:5001/admin')
-    } catch (err) {
-      console.log('AdminJS failed to load:', err.message)
-    }
-  })
-  .catch((err) => {
-    console.log(err)
-  })
-
-if (USE_REDIS) {
-  createRedisClient()
-}
 
 app.set('trust proxy', 1)
 
@@ -111,6 +68,50 @@ app.use('/api/userProfiles', userProfilesRoute)
 app.use('/api/webhooks', webhooksRoute)
 
 const PORT = process.env.PORT || 5001
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
-})
+
+// 🚀 Connect l MongoDB awwalen, w mn ba3d t-lancer l-server
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(async () => {
+    console.log('Connected to the MongoDB')
+
+    try {
+      await syncReviewsFromWooCommerce()
+      console.log('✅ Synchronised WooCommerce reviews successfully!')
+    } catch (syncErr) {
+      console.error('❌ Sync WooCommerce reviews error:', syncErr.message)
+    }
+
+    try {
+      const AdminJS = (await import('adminjs')).default
+      const expressModule = await import('@adminjs/express')
+      const AdminJSExpress = expressModule.default || expressModule
+      const mongooseModule = await import('@adminjs/mongoose')
+      const AdminJSMongoose = mongooseModule.default || mongooseModule
+
+      AdminJS.registerAdapter(AdminJSMongoose)
+
+      const admin = new AdminJS({
+        databases: [mongoose],
+        rootPath: '/admin',
+      })
+
+      const adminRouter = AdminJSExpress.buildRouter(admin)
+      app.use(admin.options.rootPath, adminRouter)
+      console.log('AdminJS started at http://localhost:5001/admin')
+    } catch (err) {
+      console.log('AdminJS failed to load:', err.message)
+    }
+
+    if (USE_REDIS) {
+      createRedisClient()
+    }
+
+    // Lancer l-server ghi ba3d ma y-t-connecta MongoDB
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`)
+    })
+  })
+  .catch((err) => {
+    console.log('❌ MongoDB Connection Error:', err)
+  })
