@@ -69,16 +69,23 @@ app.use('/api/webhooks', webhooksRoute)
 
 const PORT = process.env.PORT || 5001
 
-// 1️⃣ تشغيل السيرفر فوراً باش Render يلقى البورت محلول وما يعطيش Timeout
+// 1️⃣ Démarrer immédiatement le serveur HTTP pour que Render détecte le port ouvert
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
 })
 
-// 2️⃣ الاتصال بقاعدة البيانات في الخلفية
+// 2️⃣ Récupérer la variable d'environnement (compatible MONGODB_URI et MONGO_URI)
+const mongoURI = process.env.MONGODB_URI || process.env.MONGO_URI
+
+if (!mongoURI) {
+  console.error('❌ ERREUR CRITIQUE: Ni MONGODB_URI ni MONGO_URI ne sont définis dans les variables d’environnement !')
+}
+
+// 3️⃣ Se connecter à MongoDB en arrière-plan
 mongoose
-  .connect(process.env.MONGODB_URI)
+  .connect(mongoURI)
   .then(async () => {
-    console.log('✅ Connected to the MongoDB successfully')
+    console.log('✅ Connected to MongoDB successfully!')
 
     try {
       await syncReviewsFromWooCommerce()
@@ -103,7 +110,7 @@ mongoose
 
       const adminRouter = AdminJSExpress.buildRouter(admin)
       app.use(admin.options.rootPath, adminRouter)
-      console.log('AdminJS started at http://localhost:5001/admin')
+      console.log('AdminJS started at /admin')
     } catch (err) {
       console.log('AdminJS failed to load:', err.message)
     }
@@ -113,5 +120,5 @@ mongoose
     }
   })
   .catch((err) => {
-    console.log('❌ MongoDB Connection Error:', err)
+    console.error('❌ MongoDB Connection Error:', err)
   })
