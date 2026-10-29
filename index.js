@@ -69,11 +69,16 @@ app.use('/api/webhooks', webhooksRoute)
 
 const PORT = process.env.PORT || 5001
 
-// 🚀 Connect l MongoDB awwalen, w mn ba3d t-lancer l-server
+// 1️⃣ تشغيل السيرفر فوراً باش Render يلقى البورت محلول وما يعطيش Timeout
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`)
+})
+
+// 2️⃣ الاتصال بقاعدة البيانات في الخلفية
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(async () => {
-    console.log('Connected to the MongoDB')
+    console.log('✅ Connected to the MongoDB successfully')
 
     try {
       await syncReviewsFromWooCommerce()
@@ -106,11 +111,6 @@ mongoose
     if (USE_REDIS) {
       createRedisClient()
     }
-
-    // Lancer l-server ghi ba3d ma y-t-connecta MongoDB
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`)
-    })
   })
   .catch((err) => {
     console.log('❌ MongoDB Connection Error:', err)
