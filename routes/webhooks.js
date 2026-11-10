@@ -1,12 +1,13 @@
 // ==========================================
 // File: routes/webhooks.js
-// Description: WooCommerce Webhooks Handler for Categories and Products Sync with Advanced Image Extraction
+// Description: WooCommerce Webhooks Handler for Products, Categories, Delete, and Orders Sync
 // ==========================================
 
 const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+// أضف موديل الطلبات هنا إذا كان متوفراً لديك (مثلاً const Order = require('../models/Order');)
 
 // 1. Webhook الخاص بالمنتجات (إضافة / تحديث)
 router.post('/product', async (req, res) => {
@@ -88,6 +89,24 @@ router.post('/product/delete', async (req, res) => {
     } catch (err) {
         console.error('❌ Product Delete Webhook Error:', err.message);
         res.status(500).send('Delete Failed');
+    }
+});
+
+// 4. Webhook الجديد للطلبات (Orders) - لحل مشكلة 404
+router.post('/order', async (req, res) => {
+    try {
+        const order = req.body;
+        console.log("⚡ Webhook received for Order ID:", order.id);
+
+        if (order && order.id) {
+            // هنا يمكنك إضافة منطق حفظ الطلب في قاعدة البيانات لاحقاً
+            console.log(`✅ Successfully received Order ID: ${order.id} with status: ${order.status}`);
+        }
+        
+        res.status(200).send('Order Webhook Processed');
+    } catch (err) {
+        console.error('❌ Order Webhook Error:', err.message);
+        res.status(500).send('Webhook Processing Failed');
     }
 });
 
