@@ -1,13 +1,12 @@
 // ==========================================
 // File: routes/webhooks.js
-// Description: WooCommerce Webhooks Handler for Products, Categories, Delete, and Orders Sync
+// Description: WooCommerce Webhooks Handler for Products, Categories, Deletions, and Orders
 // ==========================================
 
 const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
 const Category = require('../models/Category');
-// أضف موديل الطلبات هنا إذا كان متوفراً لديك (مثلاً const Order = require('../models/Order');)
 
 // 1. Webhook الخاص بالمنتجات (إضافة / تحديث)
 router.post('/product', async (req, res) => {
@@ -92,18 +91,25 @@ router.post('/product/delete', async (req, res) => {
     }
 });
 
-// 4. Webhook الجديد للطلبات (Orders) - لحل مشكلة 404
+// 4. Webhook الخاص بالطلبات (Order Created / Updated)
 router.post('/order', async (req, res) => {
     try {
         const order = req.body;
-        console.log("⚡ Webhook received for Order ID:", order.id);
+        const topic = req.headers['x-wc-webhook-topic'];
+
+        console.log(`⚡ Order Webhook Received [Topic: ${topic}] - Order ID: ${order.id}`);
 
         if (order && order.id) {
-            // هنا يمكنك إضافة منطق حفظ الطلب في قاعدة البيانات لاحقاً
-            console.log(`✅ Successfully received Order ID: ${order.id} with status: ${order.status}`);
+            if (topic === 'order.created') {
+                console.log("🆕 New Order Created in WooCommerce:", order.id);
+                // تقدر تضيف هنا الكود ديال تخزين الطلب في MongoDB
+            } else if (topic === 'order.updated') {
+                console.log("🔄 Order Updated:", order.id, "--> Status:", order.status);
+                // تقدر تضيف هنا كود تحديث حالة الطلب
+            }
         }
-        
-        res.status(200).send('Order Webhook Processed');
+
+        res.status(200).send('Order Webhook Processed Successfully');
     } catch (err) {
         console.error('❌ Order Webhook Error:', err.message);
         res.status(500).send('Webhook Processing Failed');
