@@ -1,3 +1,7 @@
+// ==========================================
+// File: controllers/cart.controller.js
+// ==========================================
+
 const Cart = require("../models/Cart")
 const Product = require("../models/Product")
 const CARGO_FEE_THRESHOLD = 200 // TODO: store in db
@@ -18,7 +22,6 @@ exports.createEmptyCartForUser = async (userId) => {
   }
 }
 
-
 exports.getCart = async (req, res) => {
   try {
     const userId = req.user.id
@@ -35,13 +38,16 @@ exports.getCart = async (req, res) => {
       })
     }
 
-    const transformedItems = cart.items.map(item => ({
+    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة (فلتة لـ null)
+    const validItems = cart.items.filter(item => item.productId != null);
+
+    const transformedItems = validItems.map(item => ({
       productId: item.productId._id,
       title: item.productId.title,
-      imageURL: item.productId.imageURLs[0] || null,
+      imageURL: item.productId.imageURLs && item.productId.imageURLs.length > 0 ? item.productId.imageURLs[0] : null,
       cargoWeight: item.productId.cargoWeight,
       stockCount: item.productId.stockCount,
-      price: item.productId.salePrice ?? item.productId.price, // Use salePrice if availabl else fallback to price
+      price: item.productId.salePrice ?? item.productId.price,
       quantity: item.quantity,
     }))
 
@@ -67,7 +73,7 @@ exports.getCart = async (req, res) => {
   }
 }
 
-// helpler function to return the updated cart
+// helper function to return the updated cart (محمية ضد المنتجات المحذوفة أو null)
 const getTransformedCart = async (userId) => {
   try {
     const cart = await Cart.findOne({ ownerId: userId }).populate({
@@ -79,13 +85,16 @@ const getTransformedCart = async (userId) => {
       return { success: false, message: "Cart not found" }
     }
 
-    const transformedItems = cart.items.map((item) => ({
+    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة (فلتة لـ null)
+    const validItems = cart.items.filter(item => item.productId != null);
+
+    const transformedItems = validItems.map((item) => ({
       productId: item.productId._id,
       title: item.productId.title,
-      imageURL: item.productId.imageURLs[0] || null,
+      imageURL: item.productId.imageURLs && item.productId.imageURLs.length > 0 ? item.productId.imageURLs[0] : null,
       cargoWeight: item.productId.cargoWeight,
       stockCount: item.productId.stockCount,
-      price: item.productId.salePrice ?? item.productId.price, // Use salePrice if available, else normal price
+      price: item.productId.salePrice ?? item.productId.price,
       quantity: item.quantity,
     }))
 
@@ -113,13 +122,11 @@ const getTransformedCart = async (userId) => {
   }
 }
 
-
 exports.addItemToCart = async (req, res) => {
   try {
     const { productId, quantity } = req.body
     const userId = req.user.id
 
-    // Check if product exists
     const product = await Product.findById(productId)
     if (!product) {
       return res.status(404).json({
@@ -128,7 +135,6 @@ exports.addItemToCart = async (req, res) => {
       })
     }
 
-    // Check product stock
     if (product.stockCount < quantity) {
       return res.status(400).json({
         success: false,
@@ -136,22 +142,18 @@ exports.addItemToCart = async (req, res) => {
       })
     }
 
-    // Find or create cart for the user
     let cart = await Cart.findOne({ ownerId: userId })
     if (!cart) {
       cart = new Cart({ ownerId: userId, items: [] })
     }
 
-    // Check if product already exists in the cart
     const existingCartItem = cart.items.find((item) =>
-      item.productId.equals(productId)
+      item.productId && item.productId.equals(productId)
     )
 
     if (existingCartItem) {
-      // Update the quantity if product already exists in cart
       existingCartItem.quantity += quantity
 
-      // Check updated quantity doesn't exceed stock
       if (existingCartItem.quantity > product.stockCount) {
         return res.status(400).json({
           success: false,
@@ -160,7 +162,6 @@ exports.addItemToCart = async (req, res) => {
         })
       }
     } else {
-      // Add new product to the cart
       cart.items.push({ productId, quantity })
     }
 
@@ -202,7 +203,7 @@ exports.deleteItemFromCart = async (req, res) => {
     }
 
     const itemIndex = cart.items.findIndex((item) =>
-      item.productId.equals(productId)
+      item.productId && item.productId.equals(productId)
     )
 
     if (itemIndex === -1) {
@@ -212,7 +213,6 @@ exports.deleteItemFromCart = async (req, res) => {
       })
     }
 
-    // Remove the item from the cart
     cart.items.splice(itemIndex, 1)
     await cart.save()
 
@@ -252,7 +252,7 @@ exports.decrementQuantity = async (req, res) => {
     }
 
     const itemIndex = cart.items.findIndex((item) =>
-      item.productId.equals(productId)
+      item.productId && item.productId.equals(productId)
     )
 
     if (itemIndex === -1) {
@@ -264,7 +264,6 @@ exports.decrementQuantity = async (req, res) => {
 
     cart.items[itemIndex].quantity -= 1
 
-    // If the quantity is 0 or less remove the item from the cart
     if (cart.items[itemIndex].quantity <= 0) {
       cart.items.splice(itemIndex, 1)
     }
@@ -320,7 +319,7 @@ exports.addItemToCartOnFeed = async (req, res) => {
     }
 
     const existingCartItem = cart.items.find((item) =>
-      item.productId.equals(productId)
+      item.productId && item.productId.equals(productId)
     )
 
     if (existingCartItem) {
@@ -379,7 +378,9 @@ exports.getCartProductIds = async (req, res) => {
       })
     }
 
-    const productIds = cart.items.map(item => item.productId.toString())
+    const productIds = cart.items
+      .filter(item => item.productId != null)
+      .map(item => item.productId.toString())
 
     res.status(200).json({
       success: true,
@@ -395,19 +396,21 @@ exports.getCartProductIds = async (req, res) => {
   }
 }
 
-
 const calculateCargoFee = (cart) => {
   if (!cart) {
     throw new Error("Cart is required")
   }
 
-  const totalAmount = cart.items.reduce((sum, item) => {
-    if (!item.productId || (typeof item.productId.price !== "number" && typeof item.productId.salePrice !== "number")) {
-      throw new Error("Item price or salePrice is missing or invalid")
+  // تصفية العناصر الصالحة وتجنب الـ null لمنع أي توقف في السيرفر
+  const validItems = cart.items.filter(item => item.productId != null);
+
+  const totalAmount = validItems.reduce((sum, item) => {
+    const productPrice = item.productId.salePrice ?? item.productId.price;
+    if (typeof productPrice !== "number") {
+      return sum;
     }
 
-    const price = item.productId.salePrice ?? item.productId.price
-    return sum + item.quantity * price
+    return sum + item.quantity * productPrice
   }, 0)
 
   return totalAmount > CARGO_FEE_THRESHOLD ? 0 : CARGO_FEE
