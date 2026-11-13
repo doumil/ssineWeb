@@ -1,9 +1,9 @@
 const express = require('express')
 const router = express.Router()
-const orderController = require('../controllers/orderController') // تأكد واش سمية الملف orderController ولا order.controller
+const orderController = require('../controllers/orderController')
 const { verifyToken } = require('../middleware/verifyToken')
 
-// 1. إنشاء طلب Cash on Delivery جديد وتزامن مع WooCommerce
+// إنشاء طلب Cash on Delivery جديد وتزامن مع WooCommerce
 router.post('/create-cod', verifyToken, orderController.createCashOnDeliveryOrder)
 
 router.get('/get-user-orders', verifyToken, orderController.getUserOrders)
