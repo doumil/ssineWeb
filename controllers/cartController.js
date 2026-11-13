@@ -28,7 +28,7 @@ exports.getCart = async (req, res) => {
 
     const cart = await Cart.findOne({ ownerId: userId }).populate({
       path: 'items.productId',
-      select: 'imageURLs title cargoWeight stockCount price salePrice',
+      select: 'images title cargoWeight stockCount price salePrice',
     })
 
     if (!cart) {
@@ -38,13 +38,13 @@ exports.getCart = async (req, res) => {
       })
     }
 
-    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة (فلتة لـ null)
+    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة
     const validItems = cart.items.filter(item => item.productId != null);
 
     const transformedItems = validItems.map(item => ({
       productId: item.productId._id,
       title: item.productId.title,
-      imageURL: item.productId.imageURLs && item.productId.imageURLs.length > 0 ? item.productId.imageURLs[0] : null,
+      imageURL: item.productId.images && item.productId.images.length > 0 ? item.productId.images[0] : null,
       cargoWeight: item.productId.cargoWeight,
       stockCount: item.productId.stockCount,
       price: item.productId.salePrice ?? item.productId.price,
@@ -73,25 +73,24 @@ exports.getCart = async (req, res) => {
   }
 }
 
-// helper function to return the updated cart (محمية ضد المنتجات المحذوفة أو null)
+// helper function to return the updated cart
 const getTransformedCart = async (userId) => {
   try {
     const cart = await Cart.findOne({ ownerId: userId }).populate({
       path: "items.productId",
-      select: "imageURLs title cargoWeight stockCount price salePrice",
+      select: "images title cargoWeight stockCount price salePrice",
     })
 
     if (!cart) {
       return { success: false, message: "Cart not found" }
     }
 
-    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة (فلتة لـ null)
     const validItems = cart.items.filter(item => item.productId != null);
 
     const transformedItems = validItems.map((item) => ({
       productId: item.productId._id,
       title: item.productId.title,
-      imageURL: item.productId.imageURLs && item.productId.imageURLs.length > 0 ? item.productId.imageURLs[0] : null,
+      imageURL: item.productId.images && item.productId.images.length > 0 ? item.productId.images[0] : null,
       cargoWeight: item.productId.cargoWeight,
       stockCount: item.productId.stockCount,
       price: item.productId.salePrice ?? item.productId.price,
@@ -401,7 +400,6 @@ const calculateCargoFee = (cart) => {
     throw new Error("Cart is required")
   }
 
-  // تصفية العناصر الصالحة وتجنب الـ null لمنع أي توقف في السيرفر
   const validItems = cart.items.filter(item => item.productId != null);
 
   const totalAmount = validItems.reduce((sum, item) => {
