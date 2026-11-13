@@ -5,7 +5,7 @@
 const Cart = require("../models/Cart")
 const Product = require("../models/Product")
 const CARGO_FEE_THRESHOLD = 200 // TODO: store in db
-const CARGO_FEE = 35 // TODO. TODO: store in db
+const CARGO_FEE = 35 // TODO: store in db
 
 exports.createEmptyCartForUser = async (userId) => {
   try {
@@ -31,6 +31,9 @@ exports.getCart = async (req, res) => {
       select: 'images title cargoWeight stockCount price salePrice',
     })
 
+    // 🔍 سطر الـ Debug لمعرفة ماذا يرجعه الـ Populate في الـ Logs
+    console.log("🔍 DEBUG CART POPULATE:", JSON.stringify(cart?.items, null, 2));
+
     if (!cart) {
       return res.status(404).json({
         success: false,
@@ -38,7 +41,7 @@ exports.getCart = async (req, res) => {
       })
     }
 
-    // تصفية العناصر لي مابقاش المنتج ديالهم موجود في القاعدة
+    // تصفية العناصر التي لم يعد منتجها موجوداً في القاعدة
     const validItems = cart.items.filter(item => item.productId != null);
 
     const transformedItems = validItems.map(item => ({
@@ -73,7 +76,7 @@ exports.getCart = async (req, res) => {
   }
 }
 
-// helper function to return the updated cart
+// دالة مساعدة لتحديث وإرجاع السلة
 const getTransformedCart = async (userId) => {
   try {
     const cart = await Cart.findOne({ ownerId: userId }).populate({
@@ -350,9 +353,11 @@ exports.addItemToCartOnFeed = async (req, res) => {
   } catch (error) {
     console.error("Error adding item to cart on feed:", error)
     res.status(500).json({
-      success: false,
-      message: "Failed to add item to cart",
-      error: error.message,
+      success: {
+        success: false,
+        message: "Failed to add item to cart",
+        error: error.message,
+      }
     })
   }
 }
