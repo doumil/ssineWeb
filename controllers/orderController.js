@@ -104,23 +104,25 @@ exports.getOrderDetails = async (req, res) => {
       currency: order.currency,
       status: order.status,
       createdAt: order.createdAt,
-      deliveryAddress: order.deliveryAddress,
-      items: order.items.map((item) => ({
-        productId: item.productId._id,
-        productTitle: item.productId.title,
-        productImage: item.productId.imageURLs[0] || null,
+      deliveryAddress: order.deliveryAddress || {},
+      items: (order.items || []).map((item) => ({
+        productId: item.productId ? item.productId._id : null,
+        productTitle: item.productId ? item.productId.title : 'Product Unavailable',
+        productImage: (item.productId && item.productId.imageURLs && item.productId.imageURLs.length > 0) 
+          ? item.productId.imageURLs[0] 
+          : null,
         quantity: item.quantity,
         price: item.price,
       })),
     };
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       order: orderDetails,
     });
   } catch (error) {
-    console.error('Error fetching order details:', error.message);
-    res.status(500).json({
+    console.error('❌ Error fetching order details:', error.message, error.stack);
+    return res.status(500).json({
       success: false,
       message: 'Failed to fetch order details.',
     });
