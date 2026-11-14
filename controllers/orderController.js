@@ -230,7 +230,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
 
-    // 2. حفظ الطلب في MongoDB أولاً
+    // 2. حفظ الطلب في MongoDB أولاً (مع إضافة paymentIntentId لتجنب خطأ الـ Validation)
     const newOrder = new Order({
       userId,
       items: orderItems,
@@ -239,6 +239,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       deliveryAddress: deliveryAddressId,
       status: 'pending',
       paymentMethod: 'COD',
+      paymentIntentId: `COD-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // 👈 حل المشكل هنا
     });
 
     await newOrder.save();
