@@ -1,5 +1,6 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
+const mongoose = require('mongoose');
 const axios = require('axios');
 
 exports.getUserOrders = async (req, res) => {
@@ -192,11 +193,10 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    // 1. جلب عنوان التوصيل الخاص بالمعاملة لكي ترسله إلى ووردبريس
-    const DeliveryAddressModel = require('../models/DeliveryAddress'); // تأكد من اسم الموديل إذا كان مختلفاً (أو Address)
-    const deliveryAddress = await DeliveryAddressModel.findById(deliveryAddressId);
+    // جلب عنوان التوصيل مباشرة عبر Mongoose لتفادي مشاكل مسارات الملفات
+    const deliveryAddress = await mongoose.model('DeliveryAddress').findById(deliveryAddressId);
 
-    // 2. جلب السلة مع تفاصيل المنتجات
+    // جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
     if (!cart || !cart.items || !cart.items.length) {
       return res.status(400).json({
@@ -225,7 +225,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
 
-    // 3. حفظ الطلب في MongoDB
+    // حفظ الطلب في MongoDB
     const newOrder = new Order({
       userId,
       items: orderItems,
@@ -239,7 +239,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // 4. إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
+    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
     try {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
@@ -269,7 +269,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       const wcOrderData = {
         payment_method: 'cod',
         payment_method_title: 'Cash on Delivery',
-        status: 'processing', // 👈 جعل الحالة processing مباشرة بدل pending payment لتفادي تعطل الطلب
+        status: 'processing',
         set_paid: false,
         billing: billingShippingData,
         shipping: billingShippingData,
@@ -295,7 +295,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       console.error('⚠️ Failed to sync order with WooCommerce:', wcError.response?.data || wcError.message);
     }
 
-    // 5. تفريغ السلة
+    // تفريغ السلة
     cart.items = [];
     await cart.save();
 
