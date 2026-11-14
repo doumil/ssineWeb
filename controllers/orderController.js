@@ -192,8 +192,13 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
+    // 1. جلب عنوان التوصيل الخاص بالمعاملة لكي ترسله إلى ووردبريس
+    const DeliveryAddressModel = require('../models/DeliveryAddress'); // تأكد من اسم الموديل إذا كان مختلفاً (أو Address)
+    const deliveryAddress = await DeliveryAddressModel.findById(deliveryAddressId);
+
+    // 2. جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
-    if (!cart || !cart.items || cart.items.length === 0) {
+    if (!cart || !cart.items || !cart.items.length) {
       return res.status(400).json({
         success: false,
         message: 'Cart is empty',
@@ -204,12 +209,9 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     const orderItems = [];
 
     for (const item of cart.items) {
-      if (!item.productId) {
-        continue;
-      }
+      if (!item.productId) continue;
       const itemPrice = item.productId.price || 0;
-      const itemTotal = itemPrice * item.quantity;
-      itemsTotal += itemTotal;
+      itemsTotal += itemPrice * item.quantity;
 
       orderItems.push({
         productId: item.productId._id,
@@ -219,17 +221,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    if (orderItems.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No valid items found in cart',
-      });
-    }
-
     const cargoFeeThreshold = 200;
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
 
+    // 3. حفظ الطلب في MongoDB
     const newOrder = new Order({
       userId,
       items: orderItems,
@@ -243,6 +239,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
+    // 4. إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
     try {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
@@ -256,10 +253,26 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         });
       }
 
+      // تجهيز بيانات العنوان والزبون لكي تظهر في WooCommerce
+      const billingShippingData = deliveryAddress ? {
+        first_name: deliveryAddress.fullName || 'Customer',
+        last_name: '',
+        address_1: deliveryAddress.address || '',
+        city: deliveryAddress.city || '',
+        state: deliveryAddress.state || '',
+        postcode: deliveryAddress.postalCode || '20220',
+        country: deliveryAddress.country || 'MA',
+        email: req.user.email || 'customer@ssine.net',
+        phone: deliveryAddress.phoneNumber || ''
+      } : {};
+
       const wcOrderData = {
         payment_method: 'cod',
         payment_method_title: 'Cash on Delivery',
+        status: 'processing', // 👈 جعل الحالة processing مباشرة بدل pending payment لتفادي تعطل الطلب
         set_paid: false,
+        billing: billingShippingData,
+        shipping: billingShippingData,
         line_items: wcLineItems,
       };
 
@@ -277,11 +290,12 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
           },
         }
       );
-      console.log('✅ Order successfully synced with WooCommerce!');
+      console.log('✅ Order successfully synced with WooCommerce with full address & name!');
     } catch (wcError) {
       console.error('⚠️ Failed to sync order with WooCommerce:', wcError.response?.data || wcError.message);
     }
 
+    // 5. تفريغ السلة
     cart.items = [];
     await cart.save();
 
