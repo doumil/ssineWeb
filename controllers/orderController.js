@@ -3,6 +3,20 @@ const Cart = require('../models/Cart');
 const mongoose = require('mongoose');
 const axios = require('axios');
 
+// تعريف Schema خفيفة للعنوان مباشرة هنا باش نتفادو أي مشكل ديال المسارات أو الموديلات غير المسجلة
+const deliveryAddressSchema = new mongoose.Schema({
+  userId: String,
+  fullName: String,
+  phoneNumber: String,
+  address: String,
+  city: String,
+  state: String,
+  postalCode: String,
+  country: String,
+});
+
+const DeliveryAddressTemp = mongoose.models.DeliveryAddress || mongoose.model('DeliveryAddress', deliveryAddressSchema);
+
 exports.getUserOrders = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -193,8 +207,8 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    // جلب عنوان التوصيل مباشرة عبر Mongoose لتفادي مشاكل مسارات الملفات
-    const deliveryAddress = await mongoose.model('DeliveryAddress').findById(deliveryAddressId);
+    // جلب عنوان التوصيل بأمان تام
+    const deliveryAddress = await DeliveryAddressTemp.findById(deliveryAddressId);
 
     // جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
