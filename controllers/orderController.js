@@ -183,9 +183,16 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     const userId = req.user.id;
     const { deliveryAddressId } = req.body;
 
+    if (!deliveryAddressId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Delivery address ID is required',
+      });
+    }
+
     // 1. جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
-    if (!cart || cart.items.length === 0) {
+    if (!cart || !cart.items || cart.items.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Cart is empty',
@@ -193,16 +200,31 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     }
 
     let itemsTotal = 0;
-    const orderItems = cart.items.map(item => {
-      const itemTotal = item.productId.price * item.quantity;
+    const orderItems = [];
+
+    // حماية ضد المنتجات التالفة أو المحذوفة
+    for (const item of cart.items) {
+      if (!item.productId) {
+        continue;
+      }
+      const itemPrice = item.productId.price || 0;
+      const itemTotal = itemPrice * item.quantity;
       itemsTotal += itemTotal;
-      return {
+
+      orderItems.push({
         productId: item.productId._id,
         quantity: item.quantity,
-        price: item.productId.price,
-        wooProductId: item.productId.wooProductId,
-      };
-    });
+        price: itemPrice,
+        wooProductId: item.productId.wooProductId || 0,
+      });
+    }
+
+    if (orderItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid items found in cart',
+      });
+    }
 
     const cargoFeeThreshold = 200; // حد التوصيل المجاني
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
@@ -211,11 +233,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     // 2. حفظ الطلب في MongoDB أولاً
     const newOrder = new Order({
       userId,
-      items: orderItems.map(i => ({
-        productId: i.productId,
-        quantity: i.quantity,
-        price: i.price,
-      })),
+      items: orderItems,
       amount: totalAmount,
       currency: 'MAD',
       deliveryAddress: deliveryAddressId,
@@ -230,7 +248,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
         quantity: item.quantity,
-      }));
+      })).filter(i => i.product_id);
 
       if (cargoFee > 0) {
         wcLineItems.push({
@@ -270,16 +288,16 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     await cart.save();
 
     // 5. إرجاع الـ orderId الحقيقي للتطبيق
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'Order created successfully and synced with WooCommerce',
       orderId: newOrder._id,
     });
   } catch (error) {
-    console.error('Error creating COD order:', error.message);
-    res.status(500).json({
+    console.error('❌ Error creating COD order:', error.message, error.stack);
+    return res.status(500).json({
       success: false,
-      message: 'Failed to create order',
+      message: `Failed to create order: ${error.message}`,
     });
   }
 };
