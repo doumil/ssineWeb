@@ -14,7 +14,7 @@ exports.getUserOrders = async (req, res) => {
       .limit(limit)
       .populate({
         path: 'items.productId',
-        select: 'title price imageURLs',
+        select: 'title price images',
       })
       .populate({
         path: 'deliveryAddress',
@@ -88,7 +88,7 @@ exports.getOrderDetails = async (req, res) => {
       })
       .populate({
         path: 'items.productId',
-        select: 'imageURLs title',
+        select: 'images title',
       });
 
     if (!order) {
@@ -108,8 +108,8 @@ exports.getOrderDetails = async (req, res) => {
       items: (order.items || []).map((item) => ({
         productId: item.productId ? item.productId._id : null,
         productTitle: item.productId ? item.productId.title : 'Product Unavailable',
-        productImage: (item.productId && item.productId.imageURLs && item.productId.imageURLs.length > 0) 
-          ? item.productId.imageURLs[0] 
+        productImage: (item.productId && item.productId.images && item.productId.images.length > 0) 
+          ? item.productId.images[0] 
           : null,
         quantity: item.quantity,
         price: item.price,
@@ -141,7 +141,7 @@ exports.getLatestOrderDetails = async (req, res) => {
       })
       .populate({
         path: 'items.productId',
-        select: 'imageURLs title',
+        select: 'images title',
       });
 
     if (!order) {
@@ -161,7 +161,7 @@ exports.getLatestOrderDetails = async (req, res) => {
       items: order.items.map((item) => ({
         productId: item.productId._id,
         productTitle: item.productId.title,
-        productImage: item.productId.imageURLs[0] || null,
+        productImage: (item.productId.images && item.productId.images.length > 0) ? item.productId.images[0] : null,
         quantity: item.quantity,
         price: item.price,
       })),
@@ -192,7 +192,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    // 1. جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
     if (!cart || !cart.items || cart.items.length === 0) {
       return res.status(400).json({
@@ -204,7 +203,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     let itemsTotal = 0;
     const orderItems = [];
 
-    // حماية ضد المنتجات التالفة أو المحذوفة
     for (const item of cart.items) {
       if (!item.productId) {
         continue;
@@ -228,11 +226,10 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    const cargoFeeThreshold = 200; // حد التوصيل المجاني
+    const cargoFeeThreshold = 200;
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
 
-    // 2. حفظ الطلب في MongoDB أولاً (مع إضافة paymentIntentId لتجنب خطأ الـ Validation)
     const newOrder = new Order({
       userId,
       items: orderItems,
@@ -241,12 +238,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       deliveryAddress: deliveryAddressId,
       status: 'pending',
       paymentMethod: 'COD',
-      paymentIntentId: `COD-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // 👈 حل المشكل هنا
+      paymentIntentId: `COD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     });
 
     await newOrder.save();
 
-    // 3. إرسال الطلب إلى WooCommerce REST API
     try {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
@@ -286,11 +282,9 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       console.error('⚠️ Failed to sync order with WooCommerce:', wcError.response?.data || wcError.message);
     }
 
-    // 4. تفريغ السلة بعد نجاح العملية
     cart.items = [];
     await cart.save();
 
-    // 5. إرجاع الـ orderId الحقيقي للتطبيق
     return res.status(201).json({
       success: true,
       message: 'Order created successfully and synced with WooCommerce',
