@@ -1,5 +1,6 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
+const Product = require('../models/Product'); // تأكد من استيراد موديل المنتج لجلب البيانات مباشرة عند الحاجة
 const mongoose = require('mongoose');
 const axios = require('axios');
 
@@ -28,7 +29,7 @@ exports.getUserOrders = async (req, res) => {
       .limit(limit)
       .populate({
         path: 'items.productId',
-        select: 'title price images',
+        select: 'title price images wooProductId',
       })
       .populate({
         path: 'deliveryAddress',
@@ -223,14 +224,21 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     for (const item of cart.items) {
       if (!item.productId) continue;
       
-      const productDoc = item.productId;
+      // حل احتياطي مضمون 100%: إيلا كان item.productId عبارة عن ID فقط، نمشيو نجيبوه مباشرة من قاعدة البيانات
+      let productDoc = item.productId;
+      if (!productDoc.wooProductId && mongoose.Types.ObjectId.isValid(productDoc)) {
+        productDoc = await Product.findById(productDoc);
+      }
+      
+      if (!productDoc) continue;
+
       const itemPrice = productDoc.price || 0;
       const wooId = productDoc.wooProductId ? Number(productDoc.wooProductId) : 0;
 
       itemsTotal += itemPrice * item.quantity;
 
       orderItems.push({
-        productId: productDoc._id,
+        productId: productDoc._id || item.productId,
         quantity: item.quantity,
         price: itemPrice,
         wooProductId: wooId,
@@ -277,13 +285,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       const clientEmail = req.user?.email || `user_${userId}@ssine.net`;
       const clientPhone = deliveryAddress?.phoneNumber || '';
 
-      // استخراج الاسم الحقيقي وتفكيكه لـ First name و Last name
       const fullName = deliveryAddress?.fullName || req.user?.name || 'Customer';
       const nameParts = fullName.trim().split(' ');
       const firstName = nameParts[0] || 'Customer';
       const lastName = nameParts.slice(1).join(' ') || '';
 
-      // 1. التحقق أو إنشاء الزبون في WooCommerce لكي يظهر في Customers
       let wooCustomerId = 0;
       try {
         const searchUserRes = await axios.get(
@@ -321,7 +327,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         console.error('⚠️ Could not resolve/create WooCommerce customer:', custErr.message);
       }
 
-      // 2. إرسال بيانات الفوترة والشحن الحقيقية مع ربط الـ customer_id
       const billingShippingData = {
         first_name: firstName,
         last_name: lastName,
