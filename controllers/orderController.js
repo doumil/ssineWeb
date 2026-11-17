@@ -1,5 +1,6 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
+const User = require('../models/User'); // تأكد أن موديل المستخدم متوفر لديك
 const mongoose = require('mongoose');
 const axios = require('axios');
 
@@ -268,12 +269,56 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
+    // مزامنة الزبون والطلب مع WooCommerce
     try {
-      const clientName = deliveryAddress?.fullName || req.user?.name || req.user?.username || 'Yassine';
-      const clientPhone = deliveryAddress?.phoneNumber || req.user?.phone || '0669533686';
-      const clientEmail = req.user?.email || 'yassinedoumil96@gmail.com';
+      const wcAuth = Buffer.from(
+        `${process.env.WP_CONSUMER_KEY}:${process.env.WP_CONSUMER_SECRET}`
+      ).toString('base64');
 
+      const clientEmail = req.user?.email || `user_${userId}@ssine.net`;
+      const clientName = deliveryAddress?.fullName || req.user?.name || 'Customer';
+      const clientPhone = deliveryAddress?.phoneNumber || '';
+
+      // 1. التحقق أو إنشاء الزبون في WooCommerce لكي يظهر في Customers ولا يبق "Guest"
+      let wooCustomerId = 0;
+      try {
+        const searchUserRes = await axios.get(
+          `${process.env.WP_URL}/wp-json/wc/v3/customers?email=${encodeURIComponent(clientEmail)}`,
+          { headers: { Authorization: `Basic ${wcAuth}` } }
+        );
+
+        if (searchUserRes.data && searchUserRes.data.length > 0) {
+          wooCustomerId = searchUserRes.data[0].id;
+        } else {
+          // إنشاء زبون جديد في ووردبريس
+          const createCustRes = await axios.post(
+            `${process.env.WP_URL}/wp-json/wc/v3/customers`,
+            {
+              email: clientEmail,
+              first_name: clientName,
+              last_name: '',
+              username: `user_${Date.now()}`,
+              billing: {
+                first_name: clientName,
+                last_name: '',
+                address_1: deliveryAddress?.address || '',
+                city: deliveryAddress?.city || '',
+                state: deliveryAddress?.state || '',
+                postcode: deliveryAddress?.postalCode || '',
+                country: deliveryAddress?.country || 'MA',
+                email: clientEmail,
+                phone: clientPhone,
+              }
+            },
+            { headers: { Authorization: `Basic ${wcAuth}`, 'Content-Type': 'application/json' } }
+          );
+          wooCustomerId = createCustRes.data.id;
+        }
+      } catch (custErr) {
+        console.error('⚠️ Could not resolve/create WooCommerce customer:', custErr.message);
+      }
+
+      // 2. إرسال الطلب مربوطاً بـ customer_id الحقيقي
       const billingShippingData = {
         first_name: clientName,
         last_name: '',
@@ -291,14 +336,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         payment_method_title: 'Cash on Delivery',
         status: 'processing',
         set_paid: false,
+        customer_id: wooCustomerId > 0 ? wooCustomerId : 0, // ربط الطلب بالزبون مباشرة!
         billing: billingShippingData,
         shipping: billingShippingData,
         line_items: wcLineItems,
       };
-
-      const wcAuth = Buffer.from(
-        `${process.env.WP_CONSUMER_KEY}:${process.env.WP_CONSUMER_SECRET}`
-      ).toString('base64');
 
       await axios.post(
         `${process.env.WP_URL}/wp-json/wc/v3/orders`,
@@ -310,7 +352,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
           },
         }
       );
-      console.log('✅ Order successfully synced with WooCommerce with full address & name!');
+      console.log('✅ Order & Customer successfully synced with WooCommerce!');
     } catch (wcError) {
       console.error('❌ WooCommerce Sync Error Details:', {
         status: wcError.response?.status,
