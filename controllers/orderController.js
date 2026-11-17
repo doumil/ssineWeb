@@ -218,23 +218,42 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     let itemsTotal = 0;
     const orderItems = [];
+    const wcLineItems = [];
 
     for (const item of cart.items) {
       if (!item.productId) continue;
-      const itemPrice = item.productId.price || 0;
+      
+      const productDoc = item.productId;
+      const itemPrice = productDoc.price || 0;
+      const wooId = productDoc.wooProductId ? Number(productDoc.wooProductId) : 0;
+
       itemsTotal += itemPrice * item.quantity;
 
       orderItems.push({
-        productId: item.productId._id,
+        productId: productDoc._id,
         quantity: item.quantity,
         price: itemPrice,
-        wooProductId: item.productId.wooProductId || 0,
+        wooProductId: wooId,
       });
+
+      if (wooId > 0) {
+        wcLineItems.push({
+          product_id: wooId,
+          quantity: item.quantity,
+        });
+      }
     }
 
     const cargoFeeThreshold = 200;
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
+
+    if (cargoFee > 0) {
+      wcLineItems.push({
+        name: 'Cargo Fee',
+        total: cargoFee.toString(),
+      });
+    }
 
     const newOrder = new Order({
       userId,
@@ -249,20 +268,8 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل وحماية ضد Null
+    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
     try {
-      const wcLineItems = orderItems.map(item => ({
-        product_id: item.wooProductId,
-        quantity: item.quantity,
-      })).filter(i => i.product_id);
-
-      if (cargoFee > 0) {
-        wcLineItems.push({
-          name: 'Cargo Fee',
-          total: cargoFee.toString(),
-        });
-      }
-
       const clientName = deliveryAddress?.fullName || req.user?.name || req.user?.username || 'Yassine';
       const clientPhone = deliveryAddress?.phoneNumber || req.user?.phone || '0669533686';
       const clientEmail = req.user?.email || 'yassinedoumil96@gmail.com';
@@ -305,7 +312,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       );
       console.log('✅ Order successfully synced with WooCommerce with full address & name!');
     } catch (wcError) {
-      console.error('⚠️ Failed to sync order with WooCommerce:', wcError.response?.data || wcError.message);
+      console.error('❌ WooCommerce Sync Error Details:', {
+        status: wcError.response?.status,
+        data: wcError.response?.data,
+        message: wcError.message
+      });
     }
 
     cart.items = [];
