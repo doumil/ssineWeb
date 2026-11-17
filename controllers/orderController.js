@@ -33,7 +33,7 @@ exports.getUserOrders = async (req, res) => {
       })
       .populate({
         path: 'deliveryAddress',
-        select: '_id city state country address',
+        select: '_id fullName phoneNumber city state country address postalCode',
       });
 
     const totalOrders = await Order.countDocuments({ userId });
@@ -207,7 +207,14 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
+    // جلب العنوان الحقيقي للزبون من قاعدة البيانات
     const deliveryAddress = await DeliveryAddressTemp.findById(deliveryAddressId);
+    if (!deliveryAddress) {
+      return res.status(404).json({
+        success: false,
+        message: 'Delivery address not found',
+      });
+    }
 
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
     if (!cart || !cart.items || !cart.items.length) {
@@ -225,8 +232,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       if (!item.productId) continue;
       
       let productDoc = item.productId;
-      
-      // إيلا كانت productDoc غير مسجلة ككائن كامل، نجيبوها من Product Model
       if (!productDoc.wooProductId && mongoose.Types.ObjectId.isValid(productDoc)) {
         productDoc = await Product.findById(productDoc);
       }
@@ -234,15 +239,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       if (!productDoc) continue;
 
       const itemPrice = productDoc.price || 0;
-      // التأكد التام من استخراج wooProductId كأرقام صحيحة
-      const wooId = Number(productDoc.wooProductId) || Number(productDoc.id) || 0;
-
-      console.log('🔍 DEBUG Product Mapping:', {
-        mongoId: productDoc._id,
-        title: productDoc.title,
-        rawWooProductId: productDoc.wooProductId,
-        parsedWooId: wooId
-      });
+      const wooId = Number(productDoc.wooProductId) || 0;
 
       itemsTotal += itemPrice * item.quantity;
 
@@ -260,8 +257,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         });
       }
     }
-
-    console.log('🛒 Final wcLineItems sent to WooCommerce:', JSON.stringify(wcLineItems, null, 2));
 
     const cargoFeeThreshold = 200;
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
@@ -287,16 +282,17 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // مزامنة الزبون والطلب مع WooCommerce
+    // مزامنة الزبون والطلب مع WooCommerce مع تمرير بيانات العنوان الحقيقية بالكامل
     try {
       const wcAuth = Buffer.from(
         `${process.env.WP_CONSUMER_KEY}:${process.env.WP_CONSUMER_SECRET}`
       ).toString('base64');
 
       const clientEmail = req.user?.email || `user_${userId}@ssine.net`;
-      const clientPhone = deliveryAddress?.phoneNumber || '';
+      const clientPhone = deliveryAddress.phoneNumber || '';
 
-      const fullName = deliveryAddress?.fullName || req.user?.name || 'Customer';
+      // تفكيك اسم الزبون الحقيقي (مثلاً: yassine doumil -> First: yassine, Last: doumil)
+      const fullName = deliveryAddress.fullName || 'Customer';
       const nameParts = fullName.trim().split(' ');
       const firstName = nameParts[0] || 'Customer';
       const lastName = nameParts.slice(1).join(' ') || '';
@@ -321,11 +317,11 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
               billing: {
                 first_name: firstName,
                 last_name: lastName,
-                address_1: deliveryAddress?.address || '',
-                city: deliveryAddress?.city || '',
-                state: deliveryAddress?.state || '',
-                postcode: deliveryAddress?.postalCode || '',
-                country: deliveryAddress?.country || 'MA',
+                address_1: deliveryAddress.address || '',
+                city: deliveryAddress.city || '',
+                state: deliveryAddress.state || '',
+                postcode: deliveryAddress.postalCode || '',
+                country: deliveryAddress.country || 'MA',
                 email: clientEmail,
                 phone: clientPhone,
               }
@@ -338,14 +334,15 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         console.error('⚠️ Could not resolve/create WooCommerce customer:', custErr.message);
       }
 
+      // بناء بيانات الـ Billing و Shipping مباشرة من deliveryAddress الحقيقي
       const billingShippingData = {
         first_name: firstName,
         last_name: lastName,
-        address_1: deliveryAddress?.address || '',
-        city: deliveryAddress?.city || '',
-        state: deliveryAddress?.state || '',
-        postcode: deliveryAddress?.postalCode || '',
-        country: deliveryAddress?.country || 'MA',
+        address_1: deliveryAddress.address || '',
+        city: deliveryAddress.city || '',
+        state: deliveryAddress.state || '',
+        postcode: deliveryAddress.postalCode || '',
+        country: deliveryAddress.country || 'MA',
         email: clientEmail,
         phone: clientPhone
       };
@@ -371,7 +368,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
           },
         }
       );
-      console.log('✅ Order & Customer successfully synced with WooCommerce!');
+      console.log('✅ Order & Customer successfully synced with WooCommerce with correct address!');
     } catch (wcError) {
       console.error('❌ WooCommerce Sync Error Details:', {
         status: wcError.response?.status,
