@@ -3,7 +3,6 @@ const Cart = require('../models/Cart');
 const mongoose = require('mongoose');
 const axios = require('axios');
 
-// تعريف Schema خفيفة للعنوان مباشرة هنا باش نتفادو أي مشكل ديال المسارات أو الموديلات غير المسجلة
 const deliveryAddressSchema = new mongoose.Schema({
   userId: String,
   fullName: String,
@@ -207,10 +206,8 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       });
     }
 
-    // جلب عنوان التوصيل بأمان تام
     const deliveryAddress = await DeliveryAddressTemp.findById(deliveryAddressId);
 
-    // جلب السلة مع تفاصيل المنتجات
     const cart = await Cart.findOne({ ownerId: userId }).populate('items.productId');
     if (!cart || !cart.items || !cart.items.length) {
       return res.status(400).json({
@@ -239,7 +236,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
     const totalAmount = itemsTotal + cargoFee;
 
-    // حفظ الطلب في MongoDB
     const newOrder = new Order({
       userId,
       items: orderItems,
@@ -253,7 +249,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل
+    // محاولة إرسال الطلب إلى WooCommerce مع حماية كاملة ضد الأخطاء
     try {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
@@ -267,18 +263,17 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         });
       }
 
-      // تجهيز بيانات العنوان والزبون لكي تظهر في WooCommerce
-      const billingShippingData = deliveryAddress ? {
-        first_name: deliveryAddress.fullName || 'Customer',
+      const billingShippingData = {
+        first_name: deliveryAddress?.fullName || 'Customer',
         last_name: '',
-        address_1: deliveryAddress.address || '',
-        city: deliveryAddress.city || '',
-        state: deliveryAddress.state || '',
-        postcode: deliveryAddress.postalCode || '20220',
-        country: deliveryAddress.country || 'MA',
-        email: req.user.email || 'customer@ssine.net',
-        phone: deliveryAddress.phoneNumber || ''
-      } : {};
+        address_1: deliveryAddress?.address || 'N/A',
+        city: deliveryAddress?.city || 'Casablanca',
+        state: deliveryAddress?.state || 'Casablanca-Settat',
+        postcode: deliveryAddress?.postalCode || '20220',
+        country: deliveryAddress?.country || 'MA',
+        email: 'customer@ssine.net',
+        phone: deliveryAddress?.phoneNumber || ''
+      };
 
       const wcOrderData = {
         payment_method: 'cod',
@@ -309,7 +304,6 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       console.error('⚠️ Failed to sync order with WooCommerce:', wcError.response?.data || wcError.message);
     }
 
-    // تفريغ السلة
     cart.items = [];
     await cart.save();
 
