@@ -249,7 +249,7 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
 
     await newOrder.save();
 
-    // محاولة إرسال الطلب إلى WooCommerce مع حماية كاملة ضد الأخطاء
+    // إرسال الطلب إلى WooCommerce مع بيانات العنوان والزبون بالكامل وحماية ضد Null
     try {
       const wcLineItems = orderItems.map(item => ({
         product_id: item.wooProductId,
@@ -263,16 +263,20 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         });
       }
 
+      const clientName = deliveryAddress?.fullName || req.user?.name || req.user?.username || 'Yassine';
+      const clientPhone = deliveryAddress?.phoneNumber || req.user?.phone || '0669533686';
+      const clientEmail = req.user?.email || 'yassinedoumil96@gmail.com';
+
       const billingShippingData = {
-        first_name: deliveryAddress?.fullName || 'Customer',
+        first_name: clientName,
         last_name: '',
-        address_1: deliveryAddress?.address || 'N/A',
+        address_1: deliveryAddress?.address || '153',
         city: deliveryAddress?.city || 'Casablanca',
-        state: deliveryAddress?.state || 'Casablanca-Settat',
+        state: deliveryAddress?.state || 'Morocco',
         postcode: deliveryAddress?.postalCode || '20220',
         country: deliveryAddress?.country || 'MA',
-        email: 'customer@ssine.net',
-        phone: deliveryAddress?.phoneNumber || ''
+        email: clientEmail,
+        phone: clientPhone
       };
 
       const wcOrderData = {
