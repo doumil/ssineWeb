@@ -1,6 +1,6 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
-const Product = require('../models/Product'); // تأكد من استيراد موديل المنتج لجلب البيانات مباشرة عند الحاجة
+const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const axios = require('axios');
 
@@ -224,13 +224,21 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
     for (const item of cart.items) {
       if (!item.productId) continue;
       
-      // حل احتياطي مضمون 100%: إيلا كان item.productId عبارة عن ID فقط، نمشيو نجيبوه مباشرة من قاعدة البيانات
       let productDoc = item.productId;
+      
+      // إيلا كان item.productId عبارة عن ID نصي فقط، نجيبوه من قاعدة البيانات
       if (!productDoc.wooProductId && mongoose.Types.ObjectId.isValid(productDoc)) {
         productDoc = await Product.findById(productDoc);
       }
       
       if (!productDoc) continue;
+
+      // طباعة تفاصيل المنتج للتحقق في الـ Logs
+      console.log('📦 Processing Cart Item Product:', {
+        id: productDoc._id,
+        title: productDoc.title,
+        wooProductId: productDoc.wooProductId
+      });
 
       const itemPrice = productDoc.price || 0;
       const wooId = productDoc.wooProductId ? Number(productDoc.wooProductId) : 0;
