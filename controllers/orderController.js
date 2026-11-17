@@ -226,22 +226,23 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
       
       let productDoc = item.productId;
       
-      // إيلا كان item.productId عبارة عن ID نصي فقط، نجيبوه من قاعدة البيانات
+      // إيلا كانت productDoc غير مسجلة ككائن كامل، نجيبوها من Product Model
       if (!productDoc.wooProductId && mongoose.Types.ObjectId.isValid(productDoc)) {
         productDoc = await Product.findById(productDoc);
       }
       
       if (!productDoc) continue;
 
-      // طباعة تفاصيل المنتج للتحقق في الـ Logs
-      console.log('📦 Processing Cart Item Product:', {
-        id: productDoc._id,
-        title: productDoc.title,
-        wooProductId: productDoc.wooProductId
-      });
-
       const itemPrice = productDoc.price || 0;
-      const wooId = productDoc.wooProductId ? Number(productDoc.wooProductId) : 0;
+      // التأكد التام من استخراج wooProductId كأرقام صحيحة
+      const wooId = Number(productDoc.wooProductId) || Number(productDoc.id) || 0;
+
+      console.log('🔍 DEBUG Product Mapping:', {
+        mongoId: productDoc._id,
+        title: productDoc.title,
+        rawWooProductId: productDoc.wooProductId,
+        parsedWooId: wooId
+      });
 
       itemsTotal += itemPrice * item.quantity;
 
@@ -259,6 +260,8 @@ exports.createCashOnDeliveryOrder = async (req, res) => {
         });
       }
     }
+
+    console.log('🛒 Final wcLineItems sent to WooCommerce:', JSON.stringify(wcLineItems, null, 2));
 
     const cargoFeeThreshold = 200;
     const cargoFee = itemsTotal >= cargoFeeThreshold ? 0 : (cart.cargoFee || 0);
